@@ -1,7 +1,7 @@
 
 import streamlit as st
 import pandas as pd
-from valuation import (
+from .valuation import (
     LeagueSettings, ScoringSettings, DynastySettings, KeeperSettings,
     apply_scoring, vorp_by_position, dynasty_values, apply_keeper_model,
     trade_value, Trade
@@ -10,6 +10,7 @@ from valuation import (
 st.set_page_config(page_title="FF Trade Analyzer", page_icon="🏈", layout="wide")
 st.title("🏈 Fantasy Football Trade Analyzer")
 
+# League defaults (12-team, QB/RB/RB/WR/WR/TE/2×FLEX/DEF)
 scoring = ScoringSettings()
 roster_starters = {"QB":1, "RB":2, "WR":2, "TE":1, "FLEX":2, "SUPERFLEX":0, "DEF":1, "K":0}
 ls = LeagueSettings(teams=12, roster_starters=roster_starters, scoring=scoring)
@@ -31,7 +32,7 @@ with st.sidebar:
     st.divider()
     st.header("Upload Projections CSV")
     proj_file = st.file_uploader("CSV with projections", type=["csv"]) 
-    st.caption("Try sample: data/sample_projections.csv")
+    st.caption("Try the sample in tradeanalyzer/data/sample_projections.csv")
 
 # Build settings
 
@@ -42,7 +43,7 @@ ks = KeeperSettings(enabled=keeper_enabled, include_in_trade_score=include_keepe
 
 st.header("Upload & Score Players")
 if proj_file is None:
-    st.info("Upload a projections CSV to begin.")
+    st.info("Upload a projections CSV to begin (or use the sample CSV).")
 else:
     df_raw = pd.read_csv(proj_file)
     for col in ["name","pos"]:
@@ -50,6 +51,7 @@ else:
             st.error(f"Missing required column: {col}")
             st.stop()
 
+    # Pipeline: scoring → VORP → dynasty → keepers
     df = apply_scoring(df_raw, ls)
     df = vorp_by_position(df, ls)
     df = dynasty_values(df, ls, ds)
@@ -61,7 +63,8 @@ else:
         cols = ["name","pos","proj_pts_raw","replacement_pts","vorp","value_redraft"]
         if ds.enabled: cols.append("value_dynasty")
         if keeper_enabled:
-            cols += ["draft_round","years_kept","keeper_eligible","keeper_next_round","keeper_expected_value_next_round","keeper_surplus"]
+            cols += ["draft_round","years_kept","keeper_eligible","keeper_next_round",
+                     "keeper_expected_value_next_round","keeper_surplus"]
         st.dataframe(df[cols], use_container_width=True)
 
     st.header("Define Trade")

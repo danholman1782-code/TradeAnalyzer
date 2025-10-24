@@ -1,23 +1,27 @@
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
 import numpy as np
 
+# ---------- Scoring ----------
 @dataclass
 class ScoringSettings:
+    # Passing
     pass_yd_pt: float = 0.04
     pass_td: float = 4
     pass_td50_bonus: float = 4
     int_thrown: float = -2
     pass_2pt: float = 2
     pass_400g_bonus: float = 5
+    # Rushing
     rush_yd_pt: float = 0.1
     rush_td: float = 6
     rush_td50_bonus: float = 4
     rush_2pt: float = 2
     rush_100g_bonus: float = 5
     rush_200g_bonus: float = 10
+    # Receiving
     rec_yd_pt: float = 0.1
     reception: float = 1.0
     rec_td: float = 6
@@ -25,12 +29,14 @@ class ScoringSettings:
     rec_2pt: float = 2
     rec_100g_bonus: float = 5
     rec_200g_bonus: float = 10
+    # Kicking
     pat_made: float = 1
     fg_missed: float = -1
     fg_0_39: float = 3
     fg_40_49: float = 4
     fg_50_59: float = 5
     fg_60_plus: float = 5
+    # D/ST categories
     dst_kickret_td: float = 6
     dst_puntret_td: float = 6
     dst_intret_td: float = 6
@@ -43,6 +49,7 @@ class ScoringSettings:
     dst_int: float = 2
     dst_fr: float = 2
     dst_safety: float = 2
+    # Points Allowed buckets (counts of games)
     pa0: float = 10
     pa1_6: float = 8
     pa7_13: float = 5
@@ -50,6 +57,7 @@ class ScoringSettings:
     pa28_34: float = -1
     pa35_45: float = -3
     pa46_plus: float = -5
+    # Yards Allowed buckets (counts of games)
     ya_lt100: float = 5
     ya100_199: float = 3
     ya200_299: float = 2
@@ -59,6 +67,7 @@ class ScoringSettings:
     ya500_549: float = -6
     ya550_plus: float = -7
 
+# ---------- League / Dynasty / Keeper ----------
 @dataclass
 class LeagueSettings:
     teams: int
@@ -67,7 +76,7 @@ class LeagueSettings:
     te_premium: float = 0.0
     qb_passing_td: int = 4
     superflex: bool = False
-    scoring: ScoringSettings = ScoringSettings()
+    scoring: ScoringSettings = field(default_factory=ScoringSettings)  # FIX: default_factory
 
 @dataclass
 class DynastySettings:
@@ -88,11 +97,11 @@ class KeeperSettings:
     min_round: int = 1
     draft_rounds: int = 16
     undrafted_round: Optional[int] = None
-    min_keep_round: int = 3
+    min_keep_round: int = 3           # blocks R1/R2
     disallowed_rounds: Optional[List[int]] = None
     include_in_trade_score: bool = False
     keeper_weight: float = 1.0
-    keeper_slots_team_a: Optional[int] = 4
+    keeper_slots_team_a: Optional[int] = 4  # Keep-4 cap
     keeper_slots_team_b: Optional[int] = 4
 
 @dataclass
@@ -102,13 +111,13 @@ class Trade:
     team_a_picks_gives: Optional[List[str]] = None
     team_b_picks_gives: Optional[List[str]] = None
 
-
+# ---------- Scoring pipeline ----------
 def apply_scoring(df: pd.DataFrame, ls: LeagueSettings) -> pd.DataFrame:
     s = ls.scoring
     out = df.copy()
     out["pos"] = out["pos"].astype(str).str.upper()
-    def g(c):
-        return out[c] if c in out.columns else 0.0
+    def g(col):
+        return out[col] if col in out.columns else 0.0
     te_ppr = s.reception + ls.te_premium
     pass_pts = g("proj_pass_yd")*s.pass_yd_pt + g("proj_pass_td")*s.pass_td + g("proj_pass_td50")*s.pass_td50_bonus + g("proj_int")*s.int_thrown + g("proj_pass_2pt")*s.pass_2pt + g("proj_400p_games")*s.pass_400g_bonus
     rush_pts = g("proj_rush_yd")*s.rush_yd_pt + g("proj_rush_td")*s.rush_td + g("proj_rush_td50")*s.rush_td50_bonus + g("proj_rush_2pt")*s.rush_2pt + g("proj_100r_games")*s.rush_100g_bonus + g("proj_200r_games")*s.rush_200g_bonus
@@ -119,11 +128,11 @@ def apply_scoring(df: pd.DataFrame, ls: LeagueSettings) -> pd.DataFrame:
     ya = g("proj_ya_lt100_games")*s.ya_lt100 + g("proj_ya100_199_games")*s.ya100_199 + g("proj_ya200_299_games")*s.ya200_299 + g("proj_ya350_399_games")*s.ya350_399 + g("proj_ya400_449_games")*s.ya400_449 + g("proj_ya450_499_games")*s.ya450_499 + g("proj_ya500_549_games")*s.ya500_549 + g("proj_ya550_plus_games")*s.ya550_plus
     out["proj_pts_raw"] = pass_pts + rush_pts + rec_pts
     out.loc[out["pos"]=="K","proj_pts_raw"] = k_pts[out["pos"]=="K"]
-    out.loc[out["pos"].isin(["DEF","DST"]),"proj_pts_raw"] = (dst_cat+pa+ya)[out["pos"].isin(["DEF","DST"])]
+    out.loc[out["pos"].isin(["DEF","DST"]),"proj_pts_raw"] = (dst_cat + pa + ya)[out["pos"].isin(["DEF","DST"])]
     return out
 
-
-def replacement_threshold(ls: LeagueSettings) -> Dict[str,int]:
+# ---------- Replacement & VORP ----------
+def replacement_threshold(ls: LeagueSettings) -> Dict[str, int]:
     base = {"QB": ls.roster_starters.get("QB",0)*ls.teams,
             "RB": ls.roster_starters.get("RB",0)*ls.teams,
             "WR": ls.roster_starters.get("WR",0)*ls.teams,
@@ -141,48 +150,45 @@ def vorp_by_position(df: pd.DataFrame, ls: LeagueSettings) -> pd.DataFrame:
     df = df.copy()
     repl = replacement_threshold(ls)
     frames = []
-    repl_pts: Dict[str,float] = {}
+    repl_pts: Dict[str, float] = {}
     for pos, grp in df.groupby("pos"):
         grp = grp.sort_values("proj_pts_raw", ascending=False).reset_index(drop=True)
         idx = max(repl.get(pos,0)-1, 0)
-        if len(grp)==0:
-            continue
+        if len(grp)==0: continue
         repl_pt = grp.loc[idx, "proj_pts_raw"] if idx < len(grp) else grp.iloc[-1]["proj_pts_raw"]
         repl_pts[pos] = float(repl_pt)
         frames.append(grp)
     out = pd.concat(frames, axis=0) if frames else df
     out["replacement_pts"] = out["pos"].map(lambda p: repl_pts.get(p,0.0))
     out["vorp"] = out["proj_pts_raw"] - out["replacement_pts"]
-    # light scarcity boost
     med = out.groupby("pos")["vorp"].median().to_dict()
     def boost(r):
         m = med.get(r["pos"],0.0)
         return r["vorp"] * (1.10 if m<=0 else (1.0 + min(0.10, 0.5/(m+0.01))))
     out["vorp_adj"] = out.apply(boost, axis=1)
-    out["value_redraft"] = out["vorp_adj"] * (out.get("risk", pd.Series(1.0, index=out.index)).clip(0.7,1.2))
+    risk = out.get("risk", pd.Series(1.0, index=out.index)).clip(0.7, 1.2)
+    out["value_redraft"] = out["vorp_adj"] * risk
     return out.sort_values(["pos","value_redraft"], ascending=[True,False])
 
-
+# ---------- Dynasty ----------
 def _age_multiplier(pos: str, age: float, ds: DynastySettings) -> float:
     if age is None or (isinstance(age,float) and np.isnan(age)) or pos in ("DEF","DST","K"):
         base = 1.0
     else:
-        prime = ds.prime_age.get(pos,26); decline = ds.decline_start.get(pos,prime+3)
-        if age <= prime:
-            base = 0.9 + 0.02*min(5.0, max(0.0, prime-age))
-        else:
-            base = 1.0 - 0.06*max(0.0, age-decline)
-        base = float(np.clip(base,0.6,1.2))
+        prime = ds.prime_age.get(pos,26); decline = ds.decline_start.get(pos, prime+3)
+        if age <= prime: base = 0.9 + 0.02*min(5.0, max(0.0, prime-age))
+        else: base = 1.0 - 0.06*max(0.0, age-decline)
+        base = float(np.clip(base, 0.6, 1.2))
     bias = ds.win_now_bias
     if bias != 0 and age is not None and not (isinstance(age,float) and np.isnan(age)) and pos not in ("DEF","DST","K"):
         prime = ds.prime_age.get(pos,26)
         norm = max(-4.0, min(4.0, age-prime))/4.0
         base *= (1.0 + 0.10*bias*norm)
-    return float(np.clip(base,0.5,1.3))
+    return float(np.clip(base, 0.5, 1.3))
 
 
 def _positional_decay(pos: str) -> float:
-    return {"QB":0.03,"WR":0.07,"TE":0.08,"RB":0.15,"DEF":0.10,"K":0.05}.get(pos,0.08)
+    return {"QB":0.03, "WR":0.07, "TE":0.08, "RB":0.15, "DEF":0.10, "K":0.05}.get(pos, 0.08)
 
 
 def dynasty_values(df_values: pd.DataFrame, ls: LeagueSettings, ds: DynastySettings) -> pd.DataFrame:
@@ -191,12 +197,12 @@ def dynasty_values(df_values: pd.DataFrame, ls: LeagueSettings, ds: DynastySetti
     df = df_values.copy()
     ages = df.get("age", pd.Series([np.nan]*len(df), index=df.index))
     base = df["vorp_adj"].clip(lower=0)
-    risk = df.get("risk", pd.Series(1.0, index=df.index)).clip(0.7,1.2)
+    risk = df.get("risk", pd.Series(1.0, index=df.index)).clip(0.7, 1.2)
     total = np.zeros(len(df), dtype=float)
     for year in range(1, ds.window_years+1):
-        pv = 1.0/((1.0+ds.discount_rate)**(year-1))
-        tilt = 1.0 + (ds.win_now_bias*0.10*(1.0 - (year-1)/max(1, ds.window_years-1)))
-        decay = df["pos"].map(lambda p: (1.0 - _positional_decay(p))**(year-1))
+        pv = 1.0 / ((1.0 + ds.discount_rate) ** (year-1))
+        tilt = 1.0 + (ds.win_now_bias * 0.10 * (1.0 - (year-1)/max(1, ds.window_years-1)))
+        decay = df["pos"].map(lambda p: (1.0 - _positional_decay(p)) ** (year-1))
         age_mult = []
         for i,row in df.iterrows():
             age = ages.loc[i]
@@ -206,6 +212,7 @@ def dynasty_values(df_values: pd.DataFrame, ls: LeagueSettings, ds: DynastySetti
     df["value_dynasty"] = total
     return df
 
+# ---------- Keepers ----------
 
 def _ensure_undrafted_round(ks: KeeperSettings) -> int:
     return ks.undrafted_round if ks.undrafted_round and ks.undrafted_round>0 else ks.draft_rounds
@@ -233,10 +240,8 @@ def apply_keeper_model(df_values: pd.DataFrame, ls: LeagueSettings, ds: DynastyS
     value_col = "value_dynasty" if ds.enabled else "value_redraft"
     df = df.sort_values(value_col, ascending=False).reset_index(drop=True)
     df["rank_overall"] = np.arange(1, len(df)+1)
-    if "draft_round" not in df.columns:
-        df["draft_round"] = df["rank_overall"].apply(lambda r: int(np.ceil(r/ls.teams)))
-    if "years_kept" not in df.columns:
-        df["years_kept"] = 0
+    if "draft_round" not in df.columns: df["draft_round"] = df["rank_overall"].apply(lambda r: int(np.ceil(r/ls.teams)))
+    if "years_kept" not in df.columns: df["years_kept"] = 0
     blocked = set(ks.disallowed_rounds or []) | set(range(1, ks.min_keep_round))
     def eligible(r):
         if pd.isna(r): return False
@@ -252,6 +257,7 @@ def apply_keeper_model(df_values: pd.DataFrame, ls: LeagueSettings, ds: DynastyS
     df["keeper_surplus"] = df["keeper_surplus"].clip(lower=0.0)
     return df
 
+# ---------- Picks & Trade ----------
 
 def _parse_pick(pick: str) -> Tuple[int,int,int]:
     s = pick.strip().upper().replace('-', ' ').replace('.', ' ')
@@ -283,36 +289,45 @@ def _base_pick_curve(superflex: bool) -> Dict[Tuple[int,int], float]:
 
 def value_future_pick(pick: str, ls: LeagueSettings, ds: DynastySettings, current_year: int=None) -> float:
     year, rnd, sel = _parse_pick(pick)
-    curve = _base_pick_curve(ls.superflex)
-    base = curve.get((rnd, sel), 0.5)
-    if current_year is None:
-        current_year = pd.Timestamp.today().year
+    base = _base_pick_curve(ls.superflex).get((rnd, sel), 0.5)
+    if current_year is None: current_year = pd.Timestamp.today().year
     years_out = max(0, year - current_year)
     disc = ds.discount_rate if ds.enabled else 0.12
     pv = 1.0/((1.0+disc)**years_out)
     return float(base*pv)
 
 
-def trade_value(df_values: pd.DataFrame, trade: Trade,
-                team_a_roster_counts: Dict[str,int]=None,
-                team_b_roster_counts: Dict[str,int]=None,
-                ls: LeagueSettings=None,
-                ds: DynastySettings=DynastySettings(enabled=False),
-                ks: KeeperSettings=KeeperSettings(enabled=False),
-                mode: str="redraft") -> Dict:
-    if mode not in ("redraft","dynasty"): raise ValueError("mode must be 'redraft' or 'dynasty'")
+def trade_value(
+    df_values: pd.DataFrame,
+    trade: Trade,
+    team_a_roster_counts: Optional[Dict[str,int]] = None,
+    team_b_roster_counts: Optional[Dict[str,int]] = None,
+    ls: Optional[LeagueSettings] = None,
+    ds: Optional[DynastySettings] = None,
+    ks: Optional[KeeperSettings] = None,
+    mode: str = "redraft",
+) -> Dict:
+    # SAFE defaults (avoid mutable defaults)
+    ds = ds or DynastySettings(enabled=False)
+    ks = ks or KeeperSettings(enabled=False)
     value_col = "value_dynasty" if (ds.enabled and mode=="dynasty") else "value_redraft"
+
     df = df_values.set_index("name", drop=False)
     missing = [p for p in (trade.team_a_gives + trade.team_b_gives) if p not in df.index]
-    if missing: return {"error": f"Players not found in dataset: {missing}"}
+    if missing:
+        return {"error": f"Players not found in dataset: {missing}"}
+
     caps = replacement_threshold(ls) if ls else {"QB":1,"RB":2,"WR":2,"TE":1,"DEF":1,"K":0}
     team_a_roster_counts = team_a_roster_counts or {k:0 for k in caps}
     team_b_roster_counts = team_b_roster_counts or {k:0 for k in caps}
+
     def eff(row, counts):
         pos = row["pos"]; need = caps.get(pos,0); have = counts.get(pos,0)
         return float(row[value_col] * (0.6 if have>=need else 1.0))
+
     a_in = df.loc[trade.team_b_gives]; a_out = df.loc[trade.team_a_gives]
     b_in = df.loc[trade.team_a_gives]; b_out = df.loc[trade.team_b_gives]
+
     a_in_val = a_in.apply(lambda r: eff(r, team_a_roster_counts), axis=1).sum(); a_out_val = a_out[value_col].sum()
     b_in_val = b_in.apply(lambda r: eff(r, team_b_roster_counts), axis=1).sum(); b_out_val = b_out[value_col].sum()
 
@@ -329,6 +344,7 @@ def trade_value(df_values: pd.DataFrame, trade: Trade,
         picks_detail["team_b_in_picks"] = [{"pick": p, "value": value_future_pick(p, ls, ds, now)} for p in a_out_p]
         picks_detail["team_b_out_picks"] = [{"pick": p, "value": value_future_pick(p, ls, ds, now)} for p in b_out_p]
 
+    # Keeper deltas (Keep-4 cap)
     kda = 0.0; kdb = 0.0
     if ks.enabled and ks.include_in_trade_score:
         if "keeper_surplus" not in df.columns: df["keeper_surplus"] = 0.0
@@ -347,13 +363,21 @@ def trade_value(df_values: pd.DataFrame, trade: Trade,
     a_core = float(a_in_val - a_out_val); b_core = float(b_in_val - b_out_val)
     a_tot = a_core + (ks.keeper_weight*kda if (ks.enabled and ks.include_in_trade_score) else 0.0)
     b_tot = b_core + (ks.keeper_weight*kdb if (ks.enabled and ks.include_in_trade_score) else 0.0)
-    res = {"mode": mode, "value_col": value_col,
-           "team_a_delta": a_tot, "team_b_delta": b_tot, "total_fairness": a_tot + b_tot,
-           "team_a_delta_core": a_core, "team_b_delta_core": b_core,
-           "keeper_delta_team_a": kda, "keeper_delta_team_b": kdb,
-           "team_a_in_breakdown": a_in[["name","pos",value_col,"keeper_surplus","keeper_eligible"] if ks.enabled else ["name","pos",value_col]].rename(columns={value_col:"value"}).to_dict(orient="records"),
-           "team_a_out_breakdown": a_out[["name","pos",value_col,"keeper_surplus","keeper_eligible"] if ks.enabled else ["name","pos",value_col]].rename(columns={value_col:"value"}).to_dict(orient="records"),
-           "team_b_in_breakdown": b_in[["name","pos",value_col,"keeper_surplus","keeper_eligible"] if ks.enabled else ["name","pos",value_col]].rename(columns={value_col:"value"}).to_dict(orient="records"),
-           "team_b_out_breakdown": b_out[["name","pos",value_col,"keeper_surplus","keeper_eligible"] if ks.enabled else ["name","pos",value_col]].rename(columns={value_col:"value"}).to_dict(orient="records")}
+
+    res = {
+        "mode": mode,
+        "value_col": value_col,
+        "team_a_delta": a_tot,
+        "team_b_delta": b_tot,
+        "total_fairness": a_tot + b_tot,
+        "team_a_delta_core": a_core,
+        "team_b_delta_core": b_core,
+        "keeper_delta_team_a": kda,
+        "keeper_delta_team_b": kdb,
+        "team_a_in_breakdown": a_in[["name","pos",value_col,"keeper_surplus","keeper_eligible"] if ks.enabled else ["name","pos",value_col]].rename(columns={value_col:"value"}).to_dict(orient="records"),
+        "team_a_out_breakdown": a_out[["name","pos",value_col,"keeper_surplus","keeper_eligible"] if ks.enabled else ["name","pos",value_col]].rename(columns={value_col:"value"}).to_dict(orient="records"),
+        "team_b_in_breakdown": b_in[["name","pos",value_col,"keeper_surplus","keeper_eligible"] if ks.enabled else ["name","pos",value_col]].rename(columns={value_col:"value"}).to_dict(orient="records"),
+        "team_b_out_breakdown": b_out[["name","pos",value_col,"keeper_surplus","keeper_eligible"] if ks.enabled else ["name","pos",value_col]].rename(columns={value_col:"value"}).to_dict(orient="records"),
+    }
     res.update(picks_detail)
     return res
