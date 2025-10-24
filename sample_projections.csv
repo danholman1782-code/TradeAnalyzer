@@ -1,0 +1,8 @@
+name,pos,age,risk,draft_round,years_kept,proj_pass_yd,proj_pass_td,proj_pass_td50,proj_int,proj_pass_2pt,proj_400p_games,proj_rush_yd,proj_rush_td,proj_rush_td50,proj_rush_2pt,proj_100r_games,proj_200r_games,proj_rec,proj_rec_yd,proj_rec_td,proj_rec_td50,proj_rec_2pt,proj_100re_games,proj_200re_games
+CeeDee Lamb,WR,26,1.00,1,0,0,0,0,0,0,0,20,0,0,0,0,0,110,1450,10,1,0,6,0
+Nico Collins,WR,25,1.00,11,0,0,0,0,0,0,0,10,0,0,0,0,0,95,1250,8,0,0,4,0
+Saquon Barkley,RB,28,1.00,1,0,0,0,0,0,0,0,1100,9,1,0,3,0,55,450,4,0,0,0,0
+Bucky Irving,RB,22,1.00,11,0,0,0,0,0,0,0,900,7,0,0,2,0,30,250,2,0,0,0,0
+Caleb Williams,QB,23,1.00,15,0,4200,26,1,14,2,1,250,2,0,0,0,0,0,0,0,0,0,0,0
+Rhamondre Stevenson,RB,27,1.00,11,0,0,0,0,0,0,0,950,7,0,0,2,0,40,300,2,0,0,0,0
+Dallas Cowboys,DEF,,1.00,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

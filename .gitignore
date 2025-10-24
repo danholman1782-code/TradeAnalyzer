@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+tradeanalyzer/.streamlit/secrets.toml
+
+# Data & exports
+tradeanalyzer/data/
+*_export.csv
+*_settings.json
+*.log
