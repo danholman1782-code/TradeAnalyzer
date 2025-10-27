@@ -1,4 +1,10 @@
-
+# --- robust import path for Streamlit Cloud ---
+import os, sys
+PARENT = os.path.dirname(os.path.abspath(__file__))  # /mount/src/tradeanalyzer
+ROOT = os.path.dirname(PARENT)                       # /mount/src
+if ROOT not in sys.path:
+   sys.path.insert(0, ROOT)
+# ----------------------------------------------
 import streamlit as st
 import pandas as pd
 # Use absolute package import so it works when Streamlit runs the file as a script
