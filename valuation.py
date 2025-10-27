@@ -76,7 +76,7 @@ class LeagueSettings:
     te_premium: float = 0.0
     qb_passing_td: int = 4
     superflex: bool = False
-    scoring: ScoringSettings = field(default_factory=ScoringSettings)  # FIX: default_factory
+    scoring: ScoringSettings = field(default_factory=ScoringSettings)  # default_factory fix
 
 @dataclass
 class DynastySettings:
@@ -132,6 +132,7 @@ def apply_scoring(df: pd.DataFrame, ls: LeagueSettings) -> pd.DataFrame:
     return out
 
 # ---------- Replacement & VORP ----------
+
 def replacement_threshold(ls: LeagueSettings) -> Dict[str, int]:
     base = {"QB": ls.roster_starters.get("QB",0)*ls.teams,
             "RB": ls.roster_starters.get("RB",0)*ls.teams,
@@ -171,6 +172,7 @@ def vorp_by_position(df: pd.DataFrame, ls: LeagueSettings) -> pd.DataFrame:
     return out.sort_values(["pos","value_redraft"], ascending=[True,False])
 
 # ---------- Dynasty ----------
+
 def _age_multiplier(pos: str, age: float, ds: DynastySettings) -> float:
     if age is None or (isinstance(age,float) and np.isnan(age)) or pos in ("DEF","DST","K"):
         base = 1.0
@@ -307,7 +309,6 @@ def trade_value(
     ks: Optional[KeeperSettings] = None,
     mode: str = "redraft",
 ) -> Dict:
-    # SAFE defaults (avoid mutable defaults)
     ds = ds or DynastySettings(enabled=False)
     ks = ks or KeeperSettings(enabled=False)
     value_col = "value_dynasty" if (ds.enabled and mode=="dynasty") else "value_redraft"
