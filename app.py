@@ -1,6 +1,13 @@
 
-# --- robust import path ---
-import os, sys, re, math, requests
+# --- robust import path for Streamlit Cloud ---
+import os, sys
+PARENT = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+ROOT = os.path.dirname(PARENT)
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+# ----------------------------------------------
+
+import re, math, requests
 from pathlib import Path
 from bs4 import BeautifulSoup
 import streamlit as st
@@ -15,7 +22,7 @@ from tradeanalyzer.valuation import (
 st.set_page_config(page_title="FF Trade Analyzer", page_icon="🏈", layout="wide")
 st.title("🏈 Fantasy Football Trade Analyzer")
 
-# League defaults
+# League defaults (12-team, QB/RB/RB/WR/WR/TE/2×FLEX/DEF)
 scoring = ScoringSettings()
 roster_starters = {"QB":1, "RB":2, "WR":2, "TE":1, "FLEX":2, "SUPERFLEX":0, "DEF":1, "K":0}
 ls = LeagueSettings(teams=12, roster_starters=roster_starters, scoring=scoring)
@@ -30,7 +37,7 @@ def clean_name(name: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
-# Rankings helpers
+# -------------------- Rankings helpers --------------------
 
 def ranks_to_values(df_ranks: pd.DataFrame, rank_col: str, name_col: str, pos_col: str = None) -> pd.DataFrame:
     df = df_ranks.copy()
@@ -75,6 +82,8 @@ def fetch_espn_ros_top100() -> pd.DataFrame:
         if not m: 
             continue
         rows.append({"overall": int(m.group(1)), "player": m.group(2).strip()})
+    if not rows:
+        raise RuntimeError("Could not locate ESPN 'Overall top 100' block.")
     df = pd.DataFrame(rows)
     return ranks_to_values(df, rank_col="overall", name_col="player")
 
@@ -82,6 +91,8 @@ def fetch_espn_ros_top100() -> pd.DataFrame:
 def fetch_fantasypros_ros_ppr() -> pd.DataFrame:
     url = "https://www.fantasypros.com/nfl/rankings/?type=ros&scoring=PPR"
     tables = pd.read_html(url)
+    if not tables:
+        raise RuntimeError("No tables found on FantasyPros page.")
     df0 = tables[0].copy()
     rank_col = [c for c in df0.columns if str(c).strip().lower().startswith("rank")][0]
     name_col = [c for c in df0.columns if "Player" in str(c)][0]
@@ -92,11 +103,17 @@ def fetch_fantasypros_ros_ppr() -> pd.DataFrame:
 def fetch_draftsharks_ros_ppr() -> pd.DataFrame:
     url = "https://www.draftsharks.com/ros-rankings/ppr"
     tables = pd.read_html(url)
+    if not tables:
+        raise RuntimeError("No tables found on DraftSharks ROS page.")
     df0 = tables[0].copy()
     candidates = [c for c in df0.columns if str(c).strip().lower() in ("rk","rank","overall","ovr","#")]
-    rank_col = candidates[0] if candidates else df0.columns[0]
+    if not candidates:
+        candidates = [df0.columns[0]]
+    rank_col = candidates[0]
     name_col = [c for c in df0.columns if str(c).strip().lower().startswith('player')]
-    name_col = (name_col[0] if name_col else df0.columns[1])
+    if not name_col:
+        name_col = [df0.columns[1]]
+    name_col = name_col[0]
     def ds_name(x: str) -> str:
         s = str(x)
         m = re.match(r"^([A-Z][a-zA-Z'\.\-]+\s+[A-Z][a-zA-Z'\.\-]+)", s)
@@ -116,6 +133,7 @@ with st.sidebar:
     st.divider()
     st.header("Keeper Settings")
     keeper_enabled = st.toggle("Enable keeper model", value=True)
+    st.caption("R1/R2 ineligible. Next-year cost = round − 2. Keep-4 cap applies.")
     include_keeper = st.toggle("Include keeper surplus in trade score", value=True, disabled=not keeper_enabled)
     keep_slots = st.number_input("Keeper cap per team", 0, 10, 4, disabled=not keeper_enabled)
 
@@ -140,7 +158,7 @@ with st.sidebar:
         proj_file = st.file_uploader("Upload projections CSV", type=["csv"]) 
         st.caption("Minimum columns: name, pos. Others optional.")
 
-# Settings
+# Build model settings
 ds = DynastySettings(enabled=dyn_enabled, window_years=window_years, discount_rate=discount, win_now_bias=bias)
 ks = KeeperSettings(enabled=keeper_enabled, include_in_trade_score=include_keeper,
                     keeper_slots_team_a=keep_slots, keeper_slots_team_b=keep_slots,
@@ -155,21 +173,24 @@ if data_source == "Upload CSV (projections/stats)":
     else:
         df_raw = pd.read_csv(proj_file)
         if "name" not in df_raw.columns or "pos" not in df_raw.columns:
-            st.error("Missing required columns: name and/or pos"); st.stop()
+            st.error("Missing required columns: name and/or pos")
+            st.stop()
         df = apply_scoring(df_raw, ls)
         df = vorp_by_position(df, ls)
         df = dynasty_values(df, ls, ds)
         df = apply_keeper_model(df, ls, ds, ks)
 else:
-    st.info("Rankings mode uses site ranks (or the daily snapshot) → values. No projections needed.")
+    st.info("Rankings mode converts site ranks → values. No projections needed.")
     if run_fetch:
         try:
             if provider.startswith("Local snapshot"):
                 snap_path = Path(__file__).resolve().parent / 'data' / 'ros_snapshot.csv'
                 if not snap_path.exists():
-                    st.error("No local snapshot found. Run the daily GitHub Action or generate locally."); st.stop()
+                    st.error("No local snapshot found. Wait for the daily GitHub Action or run the fetch script locally.")
+                    st.stop()
                 df = pd.read_csv(snap_path)
-                for col,default in [('draft_round',math.nan),('years_kept',0),('risk',1.0),('proj_pts_raw',0.0),('vorp_adj',0.0)]:
+                # scaffold minimal columns
+                for col,default in [("draft_round",math.nan),("years_kept",0),("risk",1.0),("proj_pts_raw",0.0),("vorp_adj",0.0)]:
                     if col not in df.columns: df[col] = default
             elif provider.startswith("ESPN"):
                 df = fetch_espn_ros_top100()
@@ -177,19 +198,22 @@ else:
                 df = fetch_fantasypros_ros_ppr()
             elif provider.startswith("DraftSharks"):
                 df = fetch_draftsharks_ros_ppr()
+            else:
+                st.error("Unsupported provider selection")
+                st.stop()
             df = dynasty_values(df, ls, ds)
             df = apply_keeper_model(df, ls, ds, ks)
             st.success(f"Loaded {len(df)} players from {provider}")
-            with st.expander("Preview values", expanded=False):
+            with st.expander("Preview values (rankings)", expanded=False):
                 st.dataframe(df[["name","pos","value_redraft","keeper_eligible","keeper_surplus"]], use_container_width=True)
         except Exception as e:
-            st.error(f"Fetch/parse error: {e}"); st.stop()
+            st.error(f"Fetch/parse error: {e}")
+            st.stop()
 
 if df is None:
     st.stop()
 
-# ---------- Compare helpers (UI-only) ----------
-import math as _math
+# -------------------- Compare helpers (UI-only) --------------------
 
 def _pick_curve(superflex: bool = False):
     r1 = [60,56,53,50,48,46,44,42,40,38,36,34]
@@ -207,42 +231,72 @@ def _pick_curve(superflex: bool = False):
     return curve
 
 def _verdict(a_tot: float, b_tot: float, eps: float = 1.0) -> str:
-    if abs(a_tot - b_tot) <= eps: return "Even"
+    if abs(a_tot - b_tot) <= eps:
+        return "Even"
     return "Team A" if a_tot > b_tot else "Team B"
 
 def _balance_suggestion(a_tot: float, b_tot: float, superflex: bool = False, target_year: int = None):
-    import pandas as _pd
-    if target_year is None: target_year = _pd.Timestamp.today().year
-    if a_tot >= b_tot: winner, needed = "Team A", max(a_tot, 0.0)
-    else: winner, needed = "Team B", max(b_tot, 0.0)
-    if needed < 0.75: return winner, None, None
+    import pandas as pd
+    if target_year is None:
+        target_year = pd.Timestamp.today().year
+    if a_tot >= b_tot:
+        winner = "Team A"; needed = max(a_tot, 0.0)
+    else:
+        winner = "Team B"; needed = max(b_tot, 0.0)
+    if needed < 0.75:
+        return winner, None, None
     curve = _pick_curve(superflex)
     (rnd, sel), val = min(curve.items(), key=lambda kv: abs(kv[1]-needed))
-    return winner, f"{target_year} {rnd}.{sel:02d}", val
+    pick_str = f"{target_year} {rnd}.{sel:02d}"
+    return winner, pick_str, val
+
 
 def render_compare_summary(st, result: dict, ls):
-    a_tot = float(result.get("team_a_delta", 0.0)); b_tot = float(result.get("team_b_delta", 0.0))
+    a_tot = float(result.get("team_a_delta", 0.0))
+    b_tot = float(result.get("team_b_delta", 0.0))
     fairness = float(result.get("total_fairness", 0.0))
-    kda = float(result.get("keeper_delta_team_a", 0.0)); kdb = float(result.get("keeper_delta_team_b", 0.0))
+    kda = float(result.get("keeper_delta_team_a", 0.0))
+    kdb = float(result.get("keeper_delta_team_b", 0.0))
+
     verdict = _verdict(a_tot, b_tot)
     st.subheader("Compare Result")
-    st.write(f"**Verdict:** {verdict} — A Δ **{a_tot:+.2f}**, B Δ **{b_tot:+.2f}**, Total **{fairness:+.2f}**")
-    m1, m2, m3 = st.columns(3)
-    with m1: st.metric("Team A Δ (incl. Keeper)", f"{a_tot:+.2f}"); st.caption(f"Keeper impact: {kda:+.2f}")
-    with m2: st.metric("Team B Δ (incl. Keeper)", f"{b_tot:+.2f}"); st.caption(f"Keeper impact: {kdb:+.2f}")
-    with m3: st.metric("Total Fairness", f"{fairness:+.2f}"); st.caption("0.00 → perfectly even under this model")
-    winner, pick_str, val = _balance_suggestion(a_tot, b_tot, ls.superflex)
-    st.divider(); st.subheader("How to balance it (suggestion)")
-    if pick_str is None: st.info("This looks close enough—no pick suggestion needed.")
-    else:
-        if winner == "Team A": st.write(f"Ask **Team A** to add **{pick_str}** (≈ **{val:.1f}** value).")
-        else: st.write(f"Ask **Team B** to add **{pick_str}** (≈ **{val:.1f}** value).")
-    with st.expander("What these numbers mean"):
-        st.markdown("- **Δ (delta)** is net value change for that team.
-- **Total Fairness** is A Δ + B Δ.
-- **Pick suggestion** uses the same pick curve & Superflex tilt as your engine.")
+    st.write(
+        f"**Verdict:** {verdict} — "
+        f"A Δ **{a_tot:+.2f}**, B Δ **{b_tot:+.2f}**, Total **{fairness:+.2f}**"
+    )
 
-# --- Trade UI ---
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("Team A Δ (incl. Keeper)", f"{a_tot:+.2f}")
+        st.caption(f"Keeper impact: {kda:+.2f}")
+    with m2:
+        st.metric("Team B Δ (incl. Keeper)", f"{b_tot:+.2f}")
+        st.caption(f"Keeper impact: {kdb:+.2f}")
+    with m3:
+        st.metric("Total Fairness", f"{fairness:+.2f}")
+        st.caption("0.00 → perfectly even under this model")
+
+    winner, pick_str, val = _balance_suggestion(a_tot, b_tot, ls.superflex)
+    st.divider()
+    st.subheader("How to balance it (suggestion)")
+    if pick_str is None:
+        st.info("This looks close enough—no pick suggestion needed.")
+    else:
+        if winner == "Team A":
+            st.write(f"Ask **Team A** to add **{pick_str}** (≈ **{val:.1f}** value).")
+        else:
+            st.write(f"Ask **Team B** to add **{pick_str}** (≈ **{val:.1f}** value).")
+
+    with st.expander("What these numbers mean"):
+        st.markdown(
+            "- **Δ (delta)** is net value change for that team.
+"
+            "- **Total Fairness** is A Δ + B Δ (can be non‑zero due to roster/keeper effects).
+"
+            "- **Pick suggestion** uses the same pick curve & Superflex tilt as your engine."
+        )
+
+# -------------------- Trade UI --------------------
 st.header("Define Trade")
 names = df["name"].tolist()
 c1, c2 = st.columns(2)
