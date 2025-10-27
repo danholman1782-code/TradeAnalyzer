@@ -1,7 +1,8 @@
 
 import streamlit as st
 import pandas as pd
-from .valuation import (
+# Use absolute package import so it works when Streamlit runs the file as a script
+from tradeanalyzer.valuation import (
     LeagueSettings, ScoringSettings, DynastySettings, KeeperSettings,
     apply_scoring, vorp_by_position, dynasty_values, apply_keeper_model,
     trade_value, Trade
